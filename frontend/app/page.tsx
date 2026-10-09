@@ -2,11 +2,32 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const TURN_USERNAME = "aa96075ef8356991d1c0cb24";
+const TURN_PASSWORD = "s4LFiOtRwFxkG317";
+
 const ICE_SERVERS: RTCIceServer[] = [
   {
-    urls:
-      process.env.NEXT_PUBLIC_STUN_URL ||
-      "stun:stun.l.google.com:19302",
+    urls: "stun:stun.relay.metered.ca:80",
+  },
+  {
+    urls: "turn:asia.relay.metered.ca:80",
+    username: TURN_USERNAME,
+    credential: TURN_PASSWORD,
+  },
+  {
+    urls: "turn:asia.relay.metered.ca:80?transport=tcp",
+    username: TURN_USERNAME,
+    credential: TURN_PASSWORD,
+  },
+  {
+    urls: "turn:asia.relay.metered.ca:443",
+    username: TURN_USERNAME,
+    credential: TURN_PASSWORD,
+  },
+  {
+    urls: "turns:asia.relay.metered.ca:443?transport=tcp",
+    username: TURN_USERNAME,
+    credential: TURN_PASSWORD,
   },
 ];
 
@@ -39,7 +60,6 @@ function getWebSocketBase() {
 export default function Home() {
   const [room, setRoom] = useState("");
   const [joined, setJoined] = useState(false);
-
   const [status, setStatus] = useState("Ready");
 
   const [micEnabled, setMicEnabled] = useState(true);
@@ -71,10 +91,6 @@ export default function Home() {
     };
   }, []);
 
-  /*
-   * Attach local camera stream after the call UI
-   * has actually been rendered.
-   */
   useEffect(() => {
     if (
       joined &&
@@ -193,7 +209,19 @@ export default function Home() {
       }
     };
 
+    connection.oniceconnectionstatechange = () => {
+      console.log(
+        "ICE connection state:",
+        connection.iceConnectionState
+      );
+    };
+
     connection.onconnectionstatechange = () => {
+      console.log(
+        "WebRTC connection state:",
+        connection.connectionState
+      );
+
       switch (connection.connectionState) {
         case "connected":
           setStatus("Call: connected");
@@ -375,8 +403,7 @@ export default function Home() {
             );
 
             if (remoteVideo.current) {
-              remoteVideo.current.srcObject =
-                null;
+              remoteVideo.current.srcObject = null;
             }
 
             pc.current?.close();
