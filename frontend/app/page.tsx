@@ -21,10 +21,19 @@ function getWebSocketBase() {
     return "ws://localhost:8000";
   }
 
-  const protocol =
-    window.location.protocol === "https:" ? "wss:" : "ws:";
+  const hostname = window.location.hostname;
 
-  return `${protocol}//${window.location.hostname}:8000`;
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1"
+  ) {
+    return "ws://localhost:8000";
+  }
+
+  return (
+    process.env.NEXT_PUBLIC_WS_URL ||
+    "wss://teleconsult-backend-fgpg.onrender.com"
+  );
 }
 
 export default function Home() {
@@ -49,9 +58,6 @@ export default function Home() {
 
   const peerId = useRef<string>("");
 
-  /*
-   * Create this browser's peer ID.
-   */
   useEffect(() => {
     peerId.current = createPeerId();
 
@@ -66,13 +72,8 @@ export default function Home() {
   }, []);
 
   /*
-   * IMPORTANT FIX:
-   *
-   * getUserMedia() runs before the call interface is rendered.
-   * Therefore the local <video> element may not exist yet.
-   *
-   * Once joined becomes true, React renders the local video
-   * element and this effect attaches the existing stream.
+   * Attach local camera stream after the call UI
+   * has actually been rendered.
    */
   useEffect(() => {
     if (
@@ -121,11 +122,6 @@ export default function Home() {
       videoTracks.length > 0 && videoTracks[0].enabled
     );
 
-    /*
-     * If the local video already exists, attach immediately.
-     * Otherwise the useEffect above will attach it after
-     * joined becomes true.
-     */
     if (localVideo.current) {
       localVideo.current.srcObject = stream;
 
@@ -151,10 +147,6 @@ export default function Home() {
       iceServers: ICE_SERVERS,
     });
 
-    /*
-     * Send our local camera/microphone tracks
-     * through WebRTC.
-     */
     if (localStream.current) {
       localStream.current
         .getTracks()
@@ -166,9 +158,6 @@ export default function Home() {
         });
     }
 
-    /*
-     * Receive the other participant's stream.
-     */
     connection.ontrack = (event) => {
       if (!remoteVideo.current) {
         return;
@@ -190,9 +179,6 @@ export default function Home() {
       });
     };
 
-    /*
-     * Send ICE candidates through our signaling server.
-     */
     connection.onicecandidate = (event) => {
       if (
         event.candidate &&
@@ -207,9 +193,6 @@ export default function Home() {
       }
     };
 
-    /*
-     * Display connection state.
-     */
     connection.onconnectionstatechange = () => {
       switch (connection.connectionState) {
         case "connected":
@@ -275,8 +258,15 @@ export default function Home() {
         peerId.current = createPeerId();
       }
 
+      const websocketBase = getWebSocketBase();
+
+      console.log(
+        "Connecting to signaling server:",
+        websocketBase
+      );
+
       const socket = new WebSocket(
-        `${getWebSocketBase()}/ws/${encodeURIComponent(
+        `${websocketBase}/ws/${encodeURIComponent(
           cleanRoom
         )}/${encodeURIComponent(peerId.current)}`
       );
@@ -295,9 +285,6 @@ export default function Home() {
         try {
           const data = JSON.parse(event.data);
 
-          /*
-           * Maximum two participants.
-           */
           if (data.type === "room-full") {
             setStatus(
               "Room is full. Maximum 2 participants."
@@ -307,10 +294,6 @@ export default function Home() {
             return;
           }
 
-          /*
-           * Existing participant detected.
-           * New participant creates the WebRTC offer.
-           */
           if (
             data.type === "room-state" &&
             data.peers?.length
@@ -319,9 +302,6 @@ export default function Home() {
             return;
           }
 
-          /*
-           * Receive WebRTC offer.
-           */
           if (data.type === "offer") {
             const connection = createPC();
 
@@ -346,9 +326,6 @@ export default function Home() {
             return;
           }
 
-          /*
-           * Receive WebRTC answer.
-           */
           if (data.type === "answer") {
             if (pc.current) {
               await pc.current.setRemoteDescription(
@@ -361,9 +338,6 @@ export default function Home() {
             return;
           }
 
-          /*
-           * Receive ICE candidate.
-           */
           if (
             data.type === "ice" &&
             data.candidate
@@ -386,9 +360,6 @@ export default function Home() {
             return;
           }
 
-          /*
-           * Receive chat message.
-           */
           if (data.type === "chat") {
             setMessages((current) => [
               ...current,
@@ -398,9 +369,6 @@ export default function Home() {
             return;
           }
 
-          /*
-           * Other participant left.
-           */
           if (data.type === "peer-left") {
             setStatus(
               "Other participant left."
@@ -422,7 +390,12 @@ export default function Home() {
         }
       };
 
-      socket.onerror = () => {
+      socket.onerror = (error) => {
+        console.error(
+          "WebSocket error:",
+          error
+        );
+
         setStatus(
           "Could not connect to signaling server."
         );
@@ -452,12 +425,6 @@ export default function Home() {
     }
   }
 
-  /*
-   * MICROPHONE CONTROL
-   *
-   * Do NOT stop/remove the track.
-   * Simply disable it.
-   */
   function toggleMic() {
     const stream = localStream.current;
 
@@ -471,6 +438,7 @@ export default function Home() {
       setStatus(
         "No microphone track available."
       );
+
       return;
     }
 
@@ -483,12 +451,6 @@ export default function Home() {
     setMicEnabled(newEnabled);
   }
 
-  /*
-   * CAMERA CONTROL
-   *
-   * Again, do not call track.stop().
-   * Disabling the track allows it to be enabled again.
-   */
   function toggleCamera() {
     const stream = localStream.current;
 
@@ -502,6 +464,7 @@ export default function Home() {
       setStatus(
         "No camera track available."
       );
+
       return;
     }
 
@@ -527,6 +490,7 @@ export default function Home() {
       setStatus(
         "Chat unavailable: signaling disconnected."
       );
+
       return;
     }
 
@@ -546,9 +510,6 @@ export default function Home() {
   }
 
   function leave() {
-    /*
-     * Close signaling.
-     */
     if (
       ws.current &&
       ws.current.readyState === WebSocket.OPEN
@@ -556,15 +517,8 @@ export default function Home() {
       ws.current.close();
     }
 
-    /*
-     * Close WebRTC.
-     */
     pc.current?.close();
 
-    /*
-     * Stop physical camera/microphone only when
-     * actually leaving the consultation.
-     */
     localStream.current
       ?.getTracks()
       .forEach((track) => {
@@ -652,7 +606,7 @@ export default function Home() {
       ) : (
         <section className="call">
           <div className="videos">
-            {/* OTHER PARTICIPANT */}
+
             <div className="videoBox remote">
               <video
                 ref={remoteVideo}
@@ -665,7 +619,6 @@ export default function Home() {
               </span>
             </div>
 
-            {/* YOUR LOCAL CAMERA */}
             <div className="videoBox local">
               <video
                 ref={localVideo}
@@ -686,7 +639,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* CHAT */}
           <aside className="card chat">
             <h2>
               Consultation chat
@@ -734,7 +686,6 @@ export default function Home() {
             </div>
           </aside>
 
-          {/* CALL CONTROLS */}
           <nav className="controls">
             <button
               onClick={toggleMic}
